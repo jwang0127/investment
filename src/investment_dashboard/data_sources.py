@@ -79,10 +79,29 @@ def fetch_free_data(days: int = 120) -> DataBundle:
     try:
         ak = importlib.import_module("akshare")
     except ImportError:
-        return _empty()
+        try:
+            market = _index_amount_direct(days)
+        except Exception as exc:
+            return DataBundle(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "none", f"AkShare 未安装，备用行情接口也失败：{exc}")
+        if market.empty:
+            return DataBundle(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "none", "AkShare 未安装，备用行情接口没有返回数据")
+        return DataBundle(market, pd.DataFrame(), pd.DataFrame(), "eastmoney", "AkShare 未安装，已使用备用行情接口")
     try:
         # AkShare 接口经常随上游调整；每一步都独立容错，保证报告可生成。
-        market = ak.stock_zh_index_daily(symbol="sh000001")
+        market_error = ""
+        try:
+            market = ak.stock_zh_index_daily(symbol="sh000001")
+        except Exception as exc:
+            market = pd.DataFrame()
+            market_error = str(exc)
+        if market.empty:
+            try:
+                market = _index_amount_direct(days)
+                market_source = "eastmoney"
+            except Exception as exc:
+                return DataBundle(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "none", f"主行情接口失败：{market_error}；备用行情接口失败：{exc}")
+        else:
+            market_source = "akshare"
         market = market.rename(columns={"date": "date", "close": "close", "成交额": "amount"})
         base_market = market.copy()
         try:
@@ -134,10 +153,12 @@ def fetch_free_data(days: int = 120) -> DataBundle:
                 industries["date"] = today
             except Exception:
                 industries = pd.DataFrame()
+        all_changes = pd.Series(dtype=float)
         try:
             raw_stocks = ak.stock_zh_a_spot_em()
             rename = {"代码": "code", "名称": "name", "最新价": "price", "涨跌幅": "pct_chg", "成交额": "amount", "换手率": "turnover", "市盈率-动态": "pe"}
             stocks = raw_stocks.rename(columns=rename)
+            all_changes = pd.to_numeric(stocks.get("pct_chg", pd.Series(dtype=float)), errors="coerce").dropna()
             needed = [c for c in ["code", "name", "price", "pct_chg", "amount", "turnover", "pe"] if c in stocks.columns]
             stocks = stocks[needed]
             for col in ["price", "pct_chg", "amount", "turnover", "pe"]:
@@ -147,8 +168,8 @@ def fetch_free_data(days: int = 120) -> DataBundle:
         except Exception:
             stocks = pd.DataFrame()
         try:
-            if not stocks.empty and "pct_chg" in stocks:
-                changes = pd.to_numeric(stocks["pct_chg"], errors="coerce").dropna()
+            if len(all_changes):
+                changes = all_changes
                 breadth = {"up": int((changes > 0).sum()), "down": int((changes < 0).sum()), "flat": int((changes == 0).sum()), "total": int(len(changes))}
             else:
                 breadth = _breadth_direct()
@@ -157,6 +178,7 @@ def fetch_free_data(days: int = 120) -> DataBundle:
                 breadth = _breadth_direct()
             except Exception:
                 breadth = None
-        return DataBundle(market, industries, stocks, "akshare", indices=indices, news=[], breadth=breadth)
+        warning = f"主行情接口失败，已切换备用行情接口：{market_error}" if market_source == "eastmoney" and market_error else ""
+        return DataBundle(market, industries, stocks, market_source, warning, indices=indices, news=[], breadth=breadth)
     except Exception as exc:  # pragma: no cover - depends on upstream network
         return DataBundle(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "akshare", f"免费行情源访问失败：{exc}")
