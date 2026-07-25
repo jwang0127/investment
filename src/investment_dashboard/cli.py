@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from .data_sources import fetch_free_data
@@ -19,6 +20,8 @@ def main() -> None:
     journal = Path("data") / "prediction_journal.jsonl"
     append_prediction(journal, payload)
     payload["journal"] = summarize_journal(journal)
+    payload["review"] = payload["journal"]
+    Path(args.output, "latest.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     if payload["status"] == "ok":
         send_feishu(
             f"量潮罗盘\n日期：{payload.get('date')}\n量能状态：{payload.get('volume_state')}\n"

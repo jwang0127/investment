@@ -15,6 +15,7 @@ class DataBundle:
     stocks: pd.DataFrame
     source: str
     warning: str = ""
+    indices: dict[str, dict] | None = None
 
 
 def _empty() -> DataBundle:
@@ -35,6 +36,19 @@ def fetch_free_data(days: int = 120) -> DataBundle:
         market["pct_chg"] = market["close"].pct_change() * 100
         market = market.tail(days)[["date", "close", "amount", "pct_chg"]]
         today = market["date"].max()
+        indices: dict[str, dict] = {}
+        for symbol, name in {"sh000001": "上证指数", "sz399001": "深证成指", "sz399006": "创业板指", "sh000688": "科创50", "bj899050": "北证50"}.items():
+            try:
+                frame = ak.stock_zh_index_daily(symbol=symbol)
+                if not frame.empty:
+                    frame = frame.sort_values("date")
+                    last = frame.iloc[-1]
+                    prev = frame.iloc[-2] if len(frame) > 1 else last
+                    close = float(last["close"])
+                    previous = float(prev["close"])
+                    indices[name] = {"close": close, "pct_chg": (close / previous - 1) * 100 if previous else 0}
+            except Exception:
+                continue
         industries = pd.DataFrame()
         stocks = pd.DataFrame()
         try:
@@ -45,8 +59,11 @@ def fetch_free_data(days: int = 120) -> DataBundle:
             if "pct_chg" in industries:
                 industries["pct_chg"] = pd.to_numeric(industries["pct_chg"], errors="coerce")
                 industries["close"] = 100 + industries["pct_chg"].fillna(0)
-                industries["amount"] = pd.to_numeric(industries.get("market_cap", 1), errors="coerce").fillna(1)
-                industries["breadth"] = pd.to_numeric(industries.get("up_count", 0), errors="coerce") / (pd.to_numeric(industries.get("up_count", 0), errors="coerce") + pd.to_numeric(industries.get("down_count", 0), errors="coerce")).replace(0, 1) * 100
+                market_cap = pd.to_numeric(industries["market_cap"], errors="coerce") if "market_cap" in industries else pd.Series(1, index=industries.index)
+                up = pd.to_numeric(industries["up_count"], errors="coerce") if "up_count" in industries else pd.Series(0, index=industries.index)
+                down = pd.to_numeric(industries["down_count"], errors="coerce") if "down_count" in industries else pd.Series(0, index=industries.index)
+                industries["amount"] = market_cap.fillna(1)
+                industries["breadth"] = (up / (up + down).replace(0, 1) * 100).fillna(50)
                 industries = industries[["date", "industry", "close", "amount", "pct_chg", "breadth"]]
         except Exception:
             industries = pd.DataFrame()
@@ -62,6 +79,6 @@ def fetch_free_data(days: int = 120) -> DataBundle:
             stocks = stocks.dropna(subset=["code", "price", "pct_chg"]).sort_values(["pct_chg", "amount"], ascending=False).head(30)
         except Exception:
             stocks = pd.DataFrame()
-        return DataBundle(market, industries, stocks, "akshare")
+        return DataBundle(market, industries, stocks, "akshare", indices=indices)
     except Exception as exc:  # pragma: no cover - depends on upstream network
         return DataBundle(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), "akshare", f"免费行情源访问失败：{exc}")
