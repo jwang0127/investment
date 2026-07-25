@@ -19,6 +19,7 @@ class DataBundle:
     indices: dict[str, dict] | None = None
     news: list[dict] | None = None
     breadth: dict | None = None
+    policy_expectations: list[dict] | None = None
 
 
 def _empty() -> DataBundle:
@@ -50,6 +51,30 @@ def _breadth_direct() -> dict:
     return {"up": sum(x > 0 for x in changes), "down": sum(x < 0 for x in changes), "flat": sum(x == 0 for x in changes), "total": len(changes)}
 
 
+def _index_amount_direct(days: int) -> pd.DataFrame:
+    """Eastmoney 指数 K 线接口：f56 是成交额，避免把 f55 成交量误标为成交额。"""
+    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    frames = []
+    for secid in ("1.000001", "0.399001"):
+        params = {"secid": secid, "klt": 101, "fqt": 1, "beg": "20260101", "end": "20991231", "fields1": "f1,f2,f3,f4", "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"}
+        response = requests.get(url, params=params, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+        response.raise_for_status()
+        rows = []
+        for line in ((response.json().get("data") or {}).get("klines") or [])[-days:]:
+            parts = line.split(",")
+            if len(parts) >= 11:
+                rows.append({"date": parts[0], "close": float(parts[2]), "amount": float(parts[6]), "pct_chg": float(parts[8])})
+        frames.append(pd.DataFrame(rows))
+    sh, sz = frames
+    if sh.empty or sz.empty:
+        return sh
+    if not sz.empty:
+        sh = sh.merge(sz[["date", "amount"]].rename(columns={"amount": "sz_amount"}), on="date", how="left")
+        sh["amount"] = sh["amount"] + sh["sz_amount"].fillna(0)
+        sh = sh.drop(columns=["sz_amount"])
+    return sh
+
+
 def fetch_free_data(days: int = 120) -> DataBundle:
     try:
         ak = importlib.import_module("akshare")
@@ -59,9 +84,15 @@ def fetch_free_data(days: int = 120) -> DataBundle:
         # AkShare 接口经常随上游调整；每一步都独立容错，保证报告可生成。
         market = ak.stock_zh_index_daily(symbol="sh000001")
         market = market.rename(columns={"date": "date", "close": "close", "成交额": "amount"})
-        if "amount" not in market:
-            market["amount"] = pd.to_numeric(market.get("volume", 0), errors="coerce")
-        market["pct_chg"] = market["close"].pct_change() * 100
+        base_market = market.copy()
+        try:
+            direct_market = _index_amount_direct(days)
+            market = direct_market if not direct_market.empty else base_market
+        except Exception:
+            # 原接口的 volume 是成交量，不是成交额；金额未知时明确留空。
+            market = base_market
+            market["amount"] = pd.NA
+            market["pct_chg"] = market["close"].pct_change() * 100
         market = market.tail(days)[["date", "close", "amount", "pct_chg"]]
         today = market["date"].max()
         indices: dict[str, dict] = {}
@@ -94,6 +125,9 @@ def fetch_free_data(days: int = 120) -> DataBundle:
                 industries["amount"] = market_cap.fillna(1)
                 industries["breadth"] = (up / (up + down).replace(0, 1) * 100).fillna(50)
                 industries = industries[["date", "industry", "close", "amount", "pct_chg", "breadth"]]
+            if industries.empty:
+                industries = _industry_direct()
+                industries["date"] = today
         except Exception:
             try:
                 industries = _industry_direct()

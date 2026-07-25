@@ -26,3 +26,17 @@ def summarize_journal(path: str | Path) -> dict:
     checked = [r for r in rows if r.get("actual_direction") in ("up", "down") and r.get("predicted_direction") in ("up", "down")]
     hits = sum(r["actual_direction"] == r["predicted_direction"] for r in checked)
     return {"observations": len(checked), "hit_rate": round(hits / len(checked), 4) if checked else None}
+
+
+def load_last_success(path: str | Path) -> dict | None:
+    target = Path(path)
+    if not target.exists():
+        return None
+    for line in reversed(target.read_text(encoding="utf-8").splitlines()):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("status") == "ok" and row.get("market"):
+            return row
+    return None
