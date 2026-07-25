@@ -2,6 +2,8 @@ name: daily-dashboard
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   schedule:
     # GitHub Actions 使用 UTC；北京时间 18:00 对应 10:00 UTC。
     - cron: '0 10 * * 1-5'
