@@ -75,6 +75,8 @@ def abstract_news(rows: list[dict]) -> list[dict]:
             theme, impact = "宏观与财政", "影响市场风险偏好和周期行业预期"
         elif any(k in title for k in ("芯片", "半导体", "人工智能", "新能源")):
             theme, impact = "产业主题", "可能影响主题行业相对强度，但不能替代业绩验证"
+        elif any(k in title for k in ("伊朗", "美伊", "霍尔木兹", "中东", "战争", "地缘")):
+            theme, impact = "地缘政治", "通过油价、避险情绪、汇率和海外风险偏好影响A股；需等待事实进展确认"
         else:
             theme, impact = row.get("category", "市场信息"), "作为背景信息观察，不单独构成交易信号"
         results.append({"theme": theme, "title": title, "impact": impact, "confidence": "中", "link": row.get("link", ""), "published": row.get("published", "")})
