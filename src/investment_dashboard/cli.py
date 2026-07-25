@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .data_sources import fetch_free_data
 from .journal import append_prediction, summarize_journal
+from .news_sources import fetch_news
 from .notifier import send_feishu
 from .report import build_report
 
@@ -16,6 +17,7 @@ def main() -> None:
     parser.add_argument("--output", default="public")
     args = parser.parse_args()
     bundle = fetch_free_data(args.days)
+    bundle.news = fetch_news()
     payload = build_report(bundle, args.output)
     journal = Path("data") / "prediction_journal.jsonl"
     append_prediction(journal, payload)

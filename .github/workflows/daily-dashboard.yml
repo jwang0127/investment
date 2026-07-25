@@ -9,7 +9,7 @@ on:
     - cron: '0 10 * * 1-5'
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -26,6 +26,13 @@ jobs:
         env:
           TUSHARE_TOKEN: ${{ secrets.TUSHARE_TOKEN }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          NEWS_API_URL: ${{ secrets.NEWS_API_URL }}
+      - name: Save model journal
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/prediction_journal.jsonl
+          git diff --cached --quiet || (git commit -m "chore: update daily model journal [skip ci]" && git push)
       - uses: actions/upload-pages-artifact@v3
         with:
           path: public
