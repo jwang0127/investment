@@ -36,3 +36,22 @@ def fetch_news() -> list[dict]:
         except Exception:
             pass
     return rows[:10]
+
+
+def abstract_news(rows: list[dict]) -> list[dict]:
+    """把标题压缩成可读的研究线索；没有模型 Key 时也能稳定产出结构化摘要。"""
+    results = []
+    for row in rows[:10]:
+        title = row.get("title", "")
+        if any(k in title for k in ("降准", "降息", "流动性", "货币")):
+            theme, impact = "流动性", "偏利好风险资产，但仍需成交量确认"
+        elif any(k in title for k in ("监管", "处罚", "规则", "证监会")):
+            theme, impact = "监管政策", "影响相关行业估值和交易行为，需区分短期冲击与长期规范"
+        elif any(k in title for k in ("财政", "专项债", "经济", "GDP", "制造业")):
+            theme, impact = "宏观与财政", "影响市场风险偏好和周期行业预期"
+        elif any(k in title for k in ("芯片", "半导体", "人工智能", "新能源")):
+            theme, impact = "产业主题", "可能影响主题行业相对强度，但不能替代业绩验证"
+        else:
+            theme, impact = row.get("category", "市场信息"), "作为背景信息观察，不单独构成交易信号"
+        results.append({"theme": theme, "title": title, "impact": impact, "confidence": "中", "link": row.get("link", ""), "published": row.get("published", "")})
+    return results
