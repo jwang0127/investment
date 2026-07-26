@@ -10,14 +10,14 @@
 
 ## 当前能力
 
-- A 股宽基指数与市场宽度；申万一级行业可扩展到二级行业。
-- 成交量状态：FLOOD / EXPAND / STABLE / SHRINK / DROUGHT。
-- 行业评分：相对强度、量能 Beta、成交额占比变化、宽度、拥挤度、背离。
-- 候选个股：在强势行业中按动量、流动性、波动率和风险项进行排序。
-- 双周期结论：1—5 个交易日与中长期价值投资分别输出。
-- 五年滚动回测接口与每日预测记录，后续可根据预测误差校准权重。
-- 静态 HTML 看板、Markdown 报告、GitHub Actions 自动生成；飞书 Webhook 可选。
-- 港股、日韩市场保留数据适配器接口，首版不与 A 股评分混合。
+- A 股宽基指数与市场宽度；东财公共接口为主源（成交额为真实值），AkShare 兜底，降级原因全程透出。
+- 成交量状态：FLOOD / EXPAND / STABLE / SHRINK / DROUGHT / UNKNOWN。阈值按近一年滚动分位自适应，样本不足回退固定阈值；极端状态需连续两日确认；缺数据一律 UNKNOWN，绝不当 DROUGHT。
+- 量能分数与当日价格方向联动：放量下跌（恐慌/出货）不给正分；宽度真实参与打分。
+- 行业评分：相对强度（5/20 日）、成交额份额变化、宽度；行业快照逐日落盘 `data/industry_history.csv`，历史攒够后时序因子自动生效；缺失因子先 z 后填中性并重归一权重。
+- 预测复盘闭环：每个交易日记录一次方向预测（`data/prediction_journal.jsonl`，按日去重），次日自动回填实际方向，输出滚动胜率并与“始终看多”基线对照。
+- 历史回测：1 日与 5 日双窗口，含基线胜率、多空拆分、分状态胜率与信号五分位单调性检验。
+- 看板：30 日量价 SVG 走势图（红涨绿跌，A 股习惯；空心柱标记下跌日）、深色模式、移动端单列、stale 数据横幅、复盘/回测卡片。
+- 静态 HTML 看板、Markdown 报告、GitHub Actions 自动生成（发布前先跑离线测试）；飞书 Webhook 可选。
 
 ## 本地运行
 
@@ -25,10 +25,17 @@
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m investment_dashboard.cli --days 120
+python -m investment_dashboard.cli --days 320
 ```
 
-生成物在 `public/`：`index.html`、`report.md`、`latest.json`。没有 API Key 时优先尝试 AkShare；数据源失败会生成带有“数据未更新”标识的报告，不会填充虚假数值。
+生成物在 `public/`：`index.html`、`report.md`、`latest.json`。数据源失败会生成带有“数据未更新”标识的报告并沿用最近一次成功快照（`data/last_success.json`），不会填充虚假数值。
+
+测试（全部离线，不访问网络）：
+
+```powershell
+pip install pytest
+python -m pytest tests/ -q
+```
 
 ## 可选配置
 
