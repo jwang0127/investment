@@ -37,6 +37,22 @@ def _f(v, default=0.0):
         return default
 
 
+def _get(url: str, **kwargs):
+    """优先 HTTPS；遇到代理断开或 5xx 时切换 HTTP 备用链路。"""
+    last_error = None
+    candidates = [url]
+    if url.startswith("https://"):
+        candidates.append(url.replace("https://", "http://", 1))
+    for candidate in candidates:
+        try:
+            response = _session.get(candidate, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.RequestException as exc:
+            last_error = exc
+    raise last_error or requests.RequestException("行情接口无响应")
+
+
 @dataclass
 class DataBundle:
     market: pd.DataFrame
@@ -54,8 +70,7 @@ def _industry_direct() -> pd.DataFrame:
     """东财板块接口：f6 是真实成交额，f104/f105 涨跌家数给出宽度。"""
     url = "https://push2.eastmoney.com/api/qt/clist/get"
     params = {"pn": 1, "pz": 100, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:90 t:2 f:!50", "fields": "f2,f3,f4,f5,f6,f7,f8,f12,f14,f104,f105"}
-    response = _session.get(url, params=params, timeout=12, headers=_UA)
-    response.raise_for_status()
+    response = _get(url, params=params, timeout=12, headers=_UA)
     items = (response.json().get("data") or {}).get("diff") or []
     rows = []
     for item in items:
@@ -74,8 +89,7 @@ def _breadth_direct() -> dict:
     """全市场涨跌家数（只拉 f3 一个字段，请求很轻）。"""
     url = "https://push2.eastmoney.com/api/qt/clist/get"
     params = {"pn": 1, "pz": 6000, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23", "fields": "f3"}
-    response = _session.get(url, params=params, timeout=15, headers=_UA)
-    response.raise_for_status()
+    response = _get(url, params=params, timeout=15, headers=_UA)
     items = (response.json().get("data") or {}).get("diff") or []
     changes = [v for v in (_f(x.get("f3"), None) for x in items) if v is not None]
     return {"up": sum(x > 0 for x in changes), "down": sum(x < 0 for x in changes), "flat": sum(x == 0 for x in changes), "total": len(changes)}
@@ -90,8 +104,7 @@ def _index_amount_direct(days: int, warnings: list[str] | None = None) -> pd.Dat
         rows = []
         try:
             params = {"secid": secid, "klt": 101, "fqt": 1, "beg": beg, "end": "20991231", "fields1": "f1,f2,f3,f4", "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"}
-            response = _session.get(url, params=params, timeout=15, headers=_UA)
-            response.raise_for_status()
+            response = _get(url, params=params, timeout=15, headers=_UA)
             for line in ((response.json().get("data") or {}).get("klines") or [])[-days:]:
                 parts = line.split(",")
                 if len(parts) < 11:
@@ -101,14 +114,14 @@ def _index_amount_direct(days: int, warnings: list[str] | None = None) -> pd.Dat
                     rows.append({"date": parts[0], "close": close, "amount": amount, "pct_chg": _f(parts[8], None)})
         except Exception as exc:
             if warnings is not None:
-                warnings.append(f"指数K线接口失败（{secid}）：{exc}")
+                warnings.append(f"指数K线备用接口不可用（{secid}）")
         frames[secid] = pd.DataFrame(rows)
     sh, sz = frames["1.000001"], frames["0.399001"]
     if sh.empty:
         return sh
     if sz.empty:
         if warnings is not None:
-            warnings.append("深证成交额缺失，两市成交额仅含沪市，量能倍率仅供参考")
+            warnings.append("深证成交额缺失，两市成交额暂不完整")
         return sh
     # inner join：只保留两市都有数据的交易日，避免序列里混入口径不一致的金额。
     merged = sh.merge(sz[["date", "amount"]].rename(columns={"amount": "sz_amount"}), on="date", how="inner")
@@ -142,8 +155,7 @@ def _fetch_indices(ak, warnings: list[str]) -> dict[str, dict]:
     try:
         url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
         params = {"secids": _INDEX_SECIDS, "fields": "f2,f3,f12,f14", "fltt": 2, "invt": 2, "pn": 1, "pz": 10, "po": 1, "np": 1}
-        response = _session.get(url, params=params, timeout=10, headers=_UA)
-        response.raise_for_status()
+        response = _get(url, params=params, timeout=10, headers=_UA)
         items = (response.json().get("data") or {}).get("diff") or []
         indices = {}
         for item in items:
@@ -182,7 +194,7 @@ def _fetch_industries(ak, today, warnings: list[str]) -> pd.DataFrame:
             industries["date"] = today
             return industries
     except Exception as exc:
-        warnings.append(f"东财行业接口失败：{exc}")
+        warnings.append("东财行业接口不可用，尝试 AkShare 备用")
     if ak is None:
         warnings.append("行业数据不可用")
         return pd.DataFrame()
@@ -204,16 +216,30 @@ def _fetch_industries(ak, today, warnings: list[str]) -> pd.DataFrame:
         warnings.append("行业成交额为估算值（总市值×换手率），仅供相对比较")
         return x[["date", "industry", "close", "amount", "pct_chg", "breadth"]]
     except Exception as exc:
-        warnings.append(f"行业数据不可用：{exc}")
+        warnings.append("行业数据暂不可用")
         return pd.DataFrame()
 
 
-def _fetch_breadth(warnings: list[str]) -> dict | None:
+def _fetch_breadth(ak, warnings: list[str]) -> dict | None:
     try:
-        return _breadth_direct()
-    except Exception as exc:
-        warnings.append(f"涨跌家数不可用：{exc}")
-        return None
+        breadth = _breadth_direct()
+        if breadth.get("total", 0) >= 1000:
+            return breadth
+        warnings.append("东财涨跌家数返回样本不足，改用 AkShare 全市场快照")
+    except Exception:
+        warnings.append("东财涨跌家数接口不可用，改用 AkShare 备用")
+    if ak is not None:
+        try:
+            raw = ak.stock_zh_a_spot_em()
+            column = next((c for c in ("涨跌幅", "pct_chg") if c in raw.columns), None)
+            if column:
+                changes = pd.to_numeric(raw[column], errors="coerce").dropna()
+                if len(changes) >= 1000:
+                    return {"up": int((changes > 0).sum()), "down": int((changes < 0).sum()), "flat": int((changes == 0).sum()), "total": int(len(changes))}
+        except Exception:
+            pass
+    warnings.append("涨跌家数暂不可用")
+    return None
 
 
 def fetch_free_data(days: int = 320) -> DataBundle:
@@ -231,5 +257,5 @@ def fetch_free_data(days: int = 320) -> DataBundle:
     today = market["date"].max()
     indices = _fetch_indices(ak, warnings)
     industries = _fetch_industries(ak, today, warnings)
-    breadth = _fetch_breadth(warnings)
+    breadth = _fetch_breadth(ak, warnings)
     return DataBundle(market, industries, pd.DataFrame(), source, "；".join(warnings), indices=indices, news=[], breadth=breadth)
