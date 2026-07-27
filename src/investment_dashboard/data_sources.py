@@ -43,6 +43,19 @@ def _get(url: str, **kwargs):
     candidates = [url]
     if url.startswith("https://"):
         candidates.append(url.replace("https://", "http://", 1))
+    if "push2.eastmoney.com" in url:
+        candidates.extend([
+            url.replace("https://push2.eastmoney.com", "http://82.push2.eastmoney.com"),
+            url.replace("http://push2.eastmoney.com", "http://82.push2.eastmoney.com"),
+            url.replace("https://push2.eastmoney.com", "http://push2his.eastmoney.com"),
+            url.replace("http://push2.eastmoney.com", "http://push2his.eastmoney.com"),
+        ])
+    elif "push2his.eastmoney.com" in url:
+        candidates.extend([
+            url.replace("https://push2his.eastmoney.com", "http://82.push2his.eastmoney.com"),
+            url.replace("http://push2his.eastmoney.com", "http://82.push2his.eastmoney.com"),
+        ])
+    candidates = list(dict.fromkeys(candidates))
     for candidate in candidates:
         try:
             response = _session.get(candidate, **kwargs)
@@ -51,6 +64,21 @@ def _get(url: str, **kwargs):
         except requests.RequestException as exc:
             last_error = exc
     raise last_error or requests.RequestException("行情接口无响应")
+
+
+def _get_json(url: str, **kwargs) -> dict:
+    """接口偶尔返回空白/HTML 但状态码仍为 200，单次请求再做 JSON 重试。"""
+    last_error = None
+    for _ in range(3):
+        try:
+            response = _get(url, **kwargs)
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+            last_error = ValueError("行情接口返回格式异常")
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+    raise last_error or ValueError("行情接口返回空数据")
 
 
 @dataclass
@@ -86,11 +114,22 @@ def _industry_direct() -> pd.DataFrame:
 
 
 def _breadth_direct() -> dict:
-    """全市场涨跌家数（只拉 f3 一个字段，请求很轻）。"""
+    """全市场涨跌家数；东财单页最多返回 100 条，需要按 total 分页。"""
     url = "https://push2.eastmoney.com/api/qt/clist/get"
-    params = {"pn": 1, "pz": 6000, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23", "fields": "f3"}
-    response = _get(url, params=params, timeout=15, headers=_UA)
-    items = (response.json().get("data") or {}).get("diff") or []
+    params = {"pn": 1, "pz": 100, "po": 1, "np": 1, "fltt": 2, "invt": 2, "fid": "f3", "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23", "fields": "f3"}
+    data = _get_json(url, params=params, timeout=15, headers=_UA).get("data") or {}
+    items = list(data.get("diff") or [])
+    total = int(data.get("total") or len(items))
+    page_size = 100
+    for page in range(2, min((total + page_size - 1) // page_size, 60) + 1):
+        page_params = dict(params, pn=page)
+        page_data = _get_json(url, params=page_params, timeout=15, headers=_UA).get("data") or {}
+        page_items = page_data.get("diff") or []
+        if not page_items:
+            break
+        items.extend(page_items)
+    if total > len(items):
+        raise RuntimeError(f"全市场涨跌家数只获取到 {len(items)}/{total} 条")
     changes = [v for v in (_f(x.get("f3"), None) for x in items) if v is not None]
     return {"up": sum(x > 0 for x in changes), "down": sum(x < 0 for x in changes), "flat": sum(x == 0 for x in changes), "total": len(changes)}
 

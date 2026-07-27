@@ -564,7 +564,7 @@ function drawChart(hostId, hist){
 }
 
 /* ---------- 页面渲染 ---------- */
-fetch('latest.json').then(r => r.json()).then(x => {
+fetch('latest.json?ts=' + Date.now(), {cache: 'no-store'}).then(r => r.json()).then(x => {
   document.getElementById('updated').textContent = '数据生成:' + new Date(x.generated_at).toLocaleString('zh-CN');
   if (x.stale || (x.status === 'ok' && x.warning)){
     document.getElementById('banner').innerHTML =
