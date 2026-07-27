@@ -5,7 +5,9 @@ on:
   push:
     branches: [main]
   schedule:
-    # GitHub Actions 使用 UTC；北京时间 18:00 对应 10:00 UTC。
+    # 工作日北京时间 09:00-15:00 对应 UTC 01:00-07:00，每 15 分钟刷新。
+    - cron: '*/15 1-7 * * 1-5'
+    # 收盘后 18:00 生成最终快照和下一交易日方向。
     - cron: '0 10 * * 1-5'
 
 permissions:
@@ -16,7 +18,7 @@ permissions:
 # push 与 schedule 可能并发触发，串行执行避免 git push 竞态。
 concurrency:
   group: daily-dashboard
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:

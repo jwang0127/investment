@@ -124,6 +124,8 @@ def _market(features: pd.DataFrame, breadth: dict | None):
         "volume_state_label": _STATE_LABELS.get(state, state),
         "volume_signal": _num(signal, 4),
         "predicted_direction": predicted,
+        "next_day_direction": predicted,
+        "next_day_horizon": "next trading day",
         "amount": _num(latest.get("amount"), 0),
         "amount_ratio20": ratio,
         "amount_ratio60": _num(latest.get("amount_ratio60")),
@@ -250,6 +252,7 @@ def render_markdown(x: dict) -> str:
     lines += [
         "## 核心结论", "",
         f"**{m['conclusion']}。**", "",
+        f"- 明日方向（下一交易日）:{ {'up': '看多', 'down': '看空', 'flat': '中性'}.get(m.get('next_day_direction') or m.get('predicted_direction'), '不判断')}",
         f"风险提示:{m['risk']}。", "",
         "## 成交量与市场宽度", "",
         f"- 上证指数:{_fmt(m.get('close'))}({_fmt_pct(m.get('pct_chg'))})",
@@ -588,7 +591,7 @@ fetch('latest.json').then(r => r.json()).then(x => {
     <p>上证指数 <b class="num">${fx(m.close)}</b> <span class="num ${cls(m.pct_chg)}">${pct(m.pct_chg)}</span>
       ｜两市成交额 <b class="num">${money(m.amount)}</b>
       ${num(m.amount_ratio20_pctl) != null ? `<span class="muted">(近一年量能分位 ${(num(m.amount_ratio20_pctl) * 100).toFixed(0)}%)</span>` : ''}
-      ｜模型方向:<b>${dirLabel[m.predicted_direction] || '不判断'}</b></p>
+      ｜明日方向(下一交易日):<b>${dirLabel[m.next_day_direction ?? m.predicted_direction] || '不判断'}</b></p>
     <div class="risk">风险提示:${esc(m.risk)}</div>
   </section>
   <section class="card">

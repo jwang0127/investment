@@ -74,7 +74,7 @@ def _feishu_text(payload: dict) -> str:
         f"{_v(market.get('conclusion'))}\n"
         f"上证 {_v(market.get('close'))}（{_v(market.get('pct_chg'), '%')}）\n"
         f"量能状态:{_v(market.get('volume_state_label') or market.get('volume_state'))}"
-        f"｜量能分数:{_v(market.get('volume_signal'))}｜模型方向:{direction}\n"
+        f"｜量能分数:{_v(market.get('volume_signal'))}｜明日方向:{direction}\n"
         f"{review_line}\n数据源:{_v(payload.get('source'))}"
     )
 
