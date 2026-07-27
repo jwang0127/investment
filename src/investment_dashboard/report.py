@@ -178,7 +178,7 @@ def build_payload(bundle, industry_history: pd.DataFrame | None = None) -> dict:
     if score_input is not None and not score_input.empty and "pct_chg" in score_input:
         try:
             scored = score_industries(score_input)
-            industries_score = _records(scored, ["industry", "score", "signal", "ret5", "ret20", "share_change5", "breadth", "pct_chg"], limit=10)
+            industries_score = _records(scored, ["industry", "score", "score_basis", "signal", "ret5", "ret20", "share_change5", "breadth", "pct_chg"], limit=10)
         except Exception:
             industries_score = []
     backtest = {}
@@ -236,6 +236,11 @@ def _fmt_money(v) -> str:
     return f"{value:.0f}"
 
 
+def _fmt_money_yi(v) -> str:
+    value = _num(v)
+    return "—" if value is None else f"{value / 1e8:.2f}亿"
+
+
 def _fmt(v, pattern="{:.2f}") -> str:
     return pattern.format(v) if _num(v) is not None else "—"
 
@@ -276,12 +281,12 @@ def render_markdown(x: dict) -> str:
         ]
     if x.get("industries_score"):
         lines += ["## 行业量能评分 Top 10", ""]
-        lines += [f"- {r['industry']}:{_fmt(r.get('score'), '{:.1f}')} 分｜{r.get('signal') or ''}" for r in x["industries_score"]]
+        lines += [f"- {r['industry']}:{_fmt(r.get('score'), '{:.1f}')} 分｜{r.get('signal') or ''}｜{r.get('score_basis') or ''}" for r in x["industries_score"]]
         lines += [""]
     lines += ["## 行业涨跌 Top 10", ""]
-    lines += [f"- {r['industry']}:{_fmt_pct(r.get('pct_chg'))}｜宽度 {_fmt(r.get('breadth'), '{:.0f}')}%" for r in x["industries_top"]] or ["- 行业数据暂不可用"]
+    lines += [f"- {r['industry']}:{_fmt_pct(r.get('pct_chg'))}｜宽度 {_fmt(r.get('breadth'), '{:.0f}')}%｜成交额 {_fmt_money_yi(r.get('amount'))}" for r in x["industries_top"]] or ["- 行业数据暂不可用"]
     lines += ["", "## 行业涨跌 Bottom 10", ""]
-    lines += [f"- {r['industry']}:{_fmt_pct(r.get('pct_chg'))}｜宽度 {_fmt(r.get('breadth'), '{:.0f}')}%" for r in x["industries_bottom"]] or ["- 行业数据暂不可用"]
+    lines += [f"- {r['industry']}:{_fmt_pct(r.get('pct_chg'))}｜宽度 {_fmt(r.get('breadth'), '{:.0f}')}%｜成交额 {_fmt_money_yi(r.get('amount'))}" for r in x["industries_bottom"]] or ["- 行业数据暂不可用"]
     lines += ["", "## 政策/数据预期", ""]
     lines += [f"- {r['item']}:{r['expected_time']}｜{r['certainty']}" for r in x.get("policy_expectations", [])] or ["- 暂无"]
     lines += ["", "---", "", "所有结论为历史数据上的研究输出，不构成投资建议。", ""]
@@ -434,13 +439,18 @@ function industryRows(xs){
   return (xs || []).map(x => `<tr><td>${esc(x.industry)}</td>
     <td class="num ${cls(x.pct_chg)}">${pct(x.pct_chg)}</td>
     <td class="num">${num(x.breadth) == null ? '—' : num(x.breadth).toFixed(0) + '%'}</td>
-    <td class="num">${money(x.amount)}</td></tr>`).join('');
+    <td class="num">${moneyYi(x.amount)}</td></tr>`).join('');
 }
+
+const moneyYi = v => {
+  const x = num(v);
+  return x == null ? '—' : (x / 1e8).toFixed(2) + '亿';
+};
 
 function scoreRows(xs){
   return (xs || []).map(x => `<tr><td>${esc(x.industry)}</td>
     <td class="num"><b>${fx(x.score, 1)}</b></td>
-    <td>${esc(x.signal || '')}</td>
+    <td>${esc(x.signal || '')}<br><small class="muted">${esc(x.score_basis || '')}</small></td>
     <td class="num ${cls(x.ret5)}">${pct(x.ret5)}</td>
     <td class="num ${cls(x.ret20)}">${pct(x.ret20)}</td>
     <td class="num">${num(x.breadth) == null ? '—' : num(x.breadth).toFixed(0) + '%'}</td></tr>`).join('');
@@ -648,19 +658,19 @@ fetch('latest.json?ts=' + Date.now(), {cache: 'no-store'}).then(r => r.json()).t
   </section>
   ${(x.industries_score || []).length ? `<section class="card full">
     <h2>行业量能评分 Top 10 <small class="muted">相对强度+份额变化+宽度,历史快照积累后逐步生效</small></h2>
-    <table><tr><th>行业</th><th class="num">评分</th><th>信号</th><th class="num">5日</th><th class="num">20日</th><th class="num">宽度</th></tr>
+    <table><tr><th>行业</th><th class="num">评分</th><th>信号/依据</th><th class="num">5日</th><th class="num">20日</th><th class="num">宽度</th></tr>
     ${scoreRows(x.industries_score)}</table>
   </section>` : ''}
   <section class="card wide">
     <h2>最近交易日行业涨跌 Top 10</h2>
     ${(x.industries_top || []).length
-      ? `<table><tr><th>行业</th><th class="num">涨跌</th><th class="num">上涨宽度</th><th class="num">成交额</th></tr>${industryRows(x.industries_top)}</table>`
+      ? `<table><tr><th>行业</th><th class="num">涨跌</th><th class="num">上涨宽度</th><th class="num">成交额(亿)</th></tr>${industryRows(x.industries_top)}</table>`
       : empty}
   </section>
   <section class="card wide">
     <h2>最近交易日行业涨跌 Bottom 10</h2>
     ${(x.industries_bottom || []).length
-      ? `<table><tr><th>行业</th><th class="num">涨跌</th><th class="num">上涨宽度</th><th class="num">成交额</th></tr>${industryRows(x.industries_bottom)}</table>`
+      ? `<table><tr><th>行业</th><th class="num">涨跌</th><th class="num">上涨宽度</th><th class="num">成交额(亿)</th></tr>${industryRows(x.industries_bottom)}</table>`
       : empty}
   </section>
   <section class="card wide">

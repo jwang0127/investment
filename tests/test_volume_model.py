@@ -125,5 +125,18 @@ def test_score_industries_multiday_factors():
     assert scored["ret5"].notna().all()
 
 
+def test_score_industries_snapshot_factors_break_ties():
+    frame = pd.DataFrame({
+        "date": ["2026-07-27"] * 4,
+        "industry": ["A", "B", "C", "D"],
+        "pct_chg": [4.0, 2.0, -1.0, -3.0],
+        "amount": [4e10, 3e10, 2e10, 1e10],
+        "breadth": [100.0] * 4,
+    })
+    scored = score_industries(frame)
+    assert scored["score"].nunique() > 1
+    assert set(scored["score_basis"]) == {"当日快照（历史不足）"}
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])

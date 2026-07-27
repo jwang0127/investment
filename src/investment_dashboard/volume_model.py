@@ -143,6 +143,8 @@ def score_industries(industry: pd.DataFrame, market: pd.DataFrame | None = None)
     x["amount_share"] = x["amount"] / x.groupby("date")["amount"].transform("sum")
     x["share_change5"] = g["amount_share"].diff(5)
     x["breadth"] = pd.to_numeric(x.get("breadth", np.nan), errors="coerce")
+    # 历史快照不足时，使用当日涨跌和成交额横截面相对强弱，避免同宽度行业全部同分。
+    x["amount_level"] = np.log1p(x["amount"].clip(lower=0))
     latest = x.groupby("industry", as_index=False).tail(1).copy()
 
     def z(s: pd.Series) -> pd.Series:
@@ -152,17 +154,22 @@ def score_industries(industry: pd.DataFrame, market: pd.DataFrame | None = None)
             return pd.Series(0.0, index=s.index)
         return ((s - s.mean(skipna=True)) / std).fillna(0)  # 先 z 后填 0：缺失即截面中性
 
-    weights = {"ret5": 16, "ret20": 14, "share_change5": 12, "breadth": 8}
+    weights = {"ret5": 16, "ret20": 14, "share_change5": 12, "breadth": 8, "pct_chg": 8, "amount_level": 8}
     available = {k: w for k, w in weights.items() if pd.to_numeric(latest[k], errors="coerce").notna().any()}
     scale = sum(weights.values()) / sum(available.values()) if available else 1.0
     contribution = sum(w * scale * z(latest[k]) for k, w in available.items())
     latest["score"] = (45 + contribution).clip(0, 100).round(2) if available else 45.0
+    latest["score_basis"] = np.where(
+        latest[["ret5", "ret20", "share_change5"]].notna().any(axis=1),
+        "历史趋势+当日快照",
+        "当日快照（历史不足）",
+    )
     latest["signal"] = np.select(
         [latest["score"] >= 70, latest["score"] >= 55, latest["score"] <= 35],
         ["强势关注", "观察", "风险回避"],
         default="等待确认",
     )
-    keep = ["date", "industry", "score", "signal", "ret5", "ret20", "share_change5", "breadth", "pct_chg", "amount"]
+    keep = ["date", "industry", "score", "score_basis", "signal", "ret5", "ret20", "share_change5", "breadth", "pct_chg", "amount"]
     latest = latest[[c for c in keep if c in latest.columns]]
     return latest.sort_values("score", ascending=False).reset_index(drop=True)
 
