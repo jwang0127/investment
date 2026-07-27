@@ -684,6 +684,17 @@ fetch('latest.json').then(r => r.json()).then(x => {
     '<section class="card full"><div class="risk">数据读取失败,请刷新页面。</div></section>';
 });
 </script>
+<script>
+// 盘中每 15 分钟重新读取一次 Actions 生成的数据；收盘后不再轮询。
+setInterval(() => {
+  const parts = new Intl.DateTimeFormat('zh-CN', {timeZone:'Asia/Shanghai', weekday:'short', hour:'2-digit', minute:'2-digit', hour12:false}).formatToParts(new Date());
+  const weekday = parts.find(x => x.type === 'weekday')?.value || '';
+  const hour = Number(parts.find(x => x.type === 'hour')?.value || 0);
+  const minute = Number(parts.find(x => x.type === 'minute')?.value || 0);
+  const tradingDay = !['周六','周日','Sat','Sun'].includes(weekday);
+  if (tradingDay && (hour > 9 || (hour === 9 && minute >= 0)) && (hour < 15 || (hour === 15 && minute === 0))) location.reload();
+}, 15 * 60 * 1000);
+</script>
 </body>
 </html>
 '''
